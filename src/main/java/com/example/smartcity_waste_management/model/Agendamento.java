@@ -22,7 +22,7 @@ public class Agendamento {
     private Date dtAgenda;
 
     @NotNull(message = "Hora do agendamento é obrigatória")
-    private Date hrAgenda;
+    private Timestamp hrAgenda;
 
     @NotBlank(message = "Endereço de coleta é obrigatório")
     private String endColeta;

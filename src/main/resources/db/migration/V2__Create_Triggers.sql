@@ -1,73 +1,95 @@
-CREATE OR REPLACE TRIGGER TRG_SELECIONAR_MOTORISTA
-BEFORE INSERT ON TB_COLETA
-FOR EACH ROW
+CREATE OR REPLACE FUNCTION selecionar_motorista()
+RETURNS TRIGGER AS $$
 DECLARE
-    v_motorista_id VARCHAR2(20);
+    v_motorista_id VARCHAR(20);
 BEGIN
-    SELECT ID_MOTORISTA INTO v_motorista_id FROM TB_MOTORISTA
-    WHERE STATUS_MOTORISTA = 'DISPONIVEL' AND ROWNUM = 1
-    FOR UPDATE OF STATUS_MOTORISTA;
+    SELECT ID_MOTORISTA INTO v_motorista_id
+    FROM TB_MOTORISTA
+    WHERE STATUS_MOTORISTA = 'DISPONIVEL'
+    LIMIT 1
+    FOR UPDATE;
 
     IF v_motorista_id IS NOT NULL THEN
-        :NEW.ID_MOTORISTA := v_motorista_id;
+        NEW.ID_MOTORISTA := v_motorista_id;
         UPDATE TB_MOTORISTA SET STATUS_MOTORISTA = 'OCUPADO' WHERE ID_MOTORISTA = v_motorista_id;
     ELSE
-        RAISE_APPLICATION_ERROR(-20009, 'Nenhum motorista disponível.');
+        RAISE EXCEPTION 'Nenhum motorista disponível.';
     END IF;
-EXCEPTION
-    WHEN NO_DATA_FOUND THEN
-        RAISE_APPLICATION_ERROR(-20010, 'Nenhum motorista disponível.');
+    RETURN NEW;
 END;
+$$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE TRIGGER TRG_KG_CAMINHAO
+CREATE TRIGGER trg_selecionar_motorista
 BEFORE INSERT ON TB_COLETA
 FOR EACH ROW
+EXECUTE FUNCTION selecionar_motorista();
+
+
+CREATE OR REPLACE FUNCTION checar_kg_caminhao()
+RETURNS TRIGGER AS $$
 DECLARE
-    v_max_capacity NUMBER;
+    v_max_capacity NUMERIC;
 BEGIN
-    SELECT KG_CAPACIDADE INTO v_max_capacity FROM TB_CAMINHAO WHERE ID_CAMINHAO = :NEW.ID_CAMINHAO;
-    IF :NEW.KG_COLETA > v_max_capacity THEN
-        RAISE_APPLICATION_ERROR(-20011, 'A coleta excede a capacidade máxima do caminhão.');
+    SELECT KG_CAPACIDADE INTO v_max_capacity FROM TB_CAMINHAO WHERE ID_CAMINHAO = NEW.ID_CAMINHAO;
+
+    IF NEW.KG_COLETA > v_max_capacity THEN
+        RAISE EXCEPTION 'A coleta excede a capacidade máxima do caminhão.';
     END IF;
+
+    RETURN NEW;
 EXCEPTION
     WHEN NO_DATA_FOUND THEN
-        RAISE_APPLICATION_ERROR(-20012, 'Caminhão não encontrado.');
+        RAISE EXCEPTION 'Caminhão não encontrado.';
 END;
+$$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE TRIGGER TRG_CHECAR_AGENDA
-BEFORE INSERT ON TB_AGENDAMENTO
+CREATE TRIGGER trg_kg_caminhao
+BEFORE INSERT ON TB_COLETA
 FOR EACH ROW
+EXECUTE FUNCTION checar_kg_caminhao();
+
+
+CREATE OR REPLACE FUNCTION checar_agenda()
+RETURNS TRIGGER AS $$
 DECLARE
-    v_count NUMBER;
+    v_count INTEGER;
 BEGIN
     SELECT COUNT(*) INTO v_count
     FROM TB_AGENDAMENTO
-    WHERE HR_AGENDA BETWEEN :NEW.HR_AGENDA - INTERVAL '1' HOUR AND :NEW.HR_AGENDA + INTERVAL '1' HOUR
-      AND DT_AGENDA = :NEW.DT_AGENDA;
-    IF v_count > 0 THEN
-        RAISE_APPLICATION_ERROR(-20004, 'Conflito de horário detectado.');
-    END IF;
-END;
+    WHERE HR_AGENDA BETWEEN NEW.HR_AGENDA - INTERVAL '1 hour' AND NEW.HR_AGENDA + INTERVAL '1 hour'
+      AND DT_AGENDA = NEW.DT_AGENDA;
 
-CREATE OR REPLACE TRIGGER TRG_ATUALIZAR_ROTA
+    IF v_count > 0 THEN
+        RAISE EXCEPTION 'Conflito de horário detectado.';
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_checar_agenda
+BEFORE INSERT ON TB_AGENDAMENTO
+FOR EACH ROW
+EXECUTE FUNCTION checar_agenda();
+
+
+CREATE OR REPLACE FUNCTION atualizar_rota()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO TB_ROTA (ID_ROTA, END_ORIGEM, END_DESTINO, DSC_ROTA, HR_PREVISAO)
+    VALUES (NEW.ID_COLETA, 'Local Origem', 'Local Destino', 'Rota atualizada', NEW.HR_COLETA)
+    ON CONFLICT (ID_ROTA)
+    DO UPDATE SET
+        END_ORIGEM = EXCLUDED.END_ORIGEM,
+        END_DESTINO = EXCLUDED.END_DESTINO,
+        DSC_ROTA = EXCLUDED.DSC_ROTA,
+        HR_PREVISAO = EXCLUDED.HR_PREVISAO;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_atualizar_rota
 AFTER INSERT OR UPDATE ON TB_COLETA
 FOR EACH ROW
-BEGIN
-    MERGE INTO TB_ROTA trg
-    USING (SELECT :NEW.ID_COLETA AS ID_COLETA, 
-                  'Local Origem' AS END_ORIGEM, 
-                  'Local Destino' AS END_DESTINO, 
-                  'Rota atualizada' AS DSC_ROTA, 
-                  :NEW.HR_COLETA AS HR_PREVISAO FROM DUAL) src
-    ON (trg.ID_ROTA = src.ID_COLETA)
-    WHEN MATCHED THEN
-        UPDATE SET 
-            trg.END_ORIGEM = src.END_ORIGEM,
-            trg.END_DESTINO = src.END_DESTINO,
-            trg.DSC_ROTA = src.DSC_ROTA,
-            trg.HR_PREVISAO = src.HR_PREVISAO
-    WHEN NOT MATCHED THEN
-        INSERT (ID_ROTA, END_ORIGEM, END_DESTINO, DSC_ROTA, HR_PREVISAO)
-        VALUES (src.ID_COLETA, src.END_ORIGEM, src.END_DESTINO, src.DSC_ROTA, src.HR_PREVISAO);
-END;
-
+EXECUTE FUNCTION atualizar_rota();

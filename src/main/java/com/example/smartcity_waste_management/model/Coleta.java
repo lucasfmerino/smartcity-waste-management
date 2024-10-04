@@ -25,7 +25,7 @@ public class Coleta {
     private Date dtColeta;
 
     @NotNull(message = "Hora da coleta é obrigatória")
-    private Date hrColeta;
+    private Timestamp hrColeta;
 
     @NotBlank(message = "ID do motorista é obrigatório")
     private String idMotorista;
